@@ -15,6 +15,7 @@ const savedBox      = document.getElementById("savedBox");
 const savedFilename = document.getElementById("savedFilename");
 const savedMeta     = document.getElementById("savedMeta");
 const errorBox      = document.getElementById("errorBox");
+const forceStopBtn  = document.getElementById("forceStopBtn");
 
 // ─────────────────────────────────────────────
 // STATE
@@ -22,6 +23,7 @@ const errorBox      = document.getElementById("errorBox");
 let selectedQuality = "720p";
 let detectedSeller  = "";   // raw name for passing to background
 let timerInterval   = null;
+let activeTabId     = null; // resolved at init; passed with all bg messages
 
 // ─────────────────────────────────────────────
 // QUALITY SELECTOR
@@ -38,7 +40,9 @@ document.querySelectorAll(".q-option").forEach((el) => {
 // HELPERS
 // ─────────────────────────────────────────────
 function bg(action, extra = {}) {
-  return chrome.runtime.sendMessage({ action, ...extra });
+  // Always include activeTabId so background can look up per-tab state.
+  const tabId = activeTabId != null ? { tabId: activeTabId } : {};
+  return chrome.runtime.sendMessage({ action, ...tabId, ...extra });
 }
 
 function fmtTime(sec) {
@@ -68,6 +72,13 @@ function applyStatus(status) {
 
   if (status.error && !status.isRecording) {
     showError(status.error);
+  }
+
+  // Force Stop button: visible only when offscreen doc is alive with no recording
+  if (status.stuckCapture) {
+    forceStopBtn.classList.remove("hidden");
+  } else {
+    forceStopBtn.classList.add("hidden");
   }
 
   if (status.isRecording) {
@@ -101,7 +112,8 @@ function applyStatus(status) {
     if (status.savedFile) {
       savedBox.classList.remove("hidden");
       savedFilename.textContent = status.savedFile.filename;
-      savedMeta.textContent = fmtBytes(status.savedFile.size) + " · saved to Downloads";
+      const partialNote = status.savedFile.isPartial ? " · stream ended early" : "";
+      savedMeta.textContent = fmtBytes(status.savedFile.size) + " · saved to Downloads" + partialNote;
     }
   }
 }
@@ -185,6 +197,19 @@ actionBtn.addEventListener("click", async () => {
 });
 
 // ─────────────────────────────────────────────
+// FORCE STOP (fix: stuck capture state)
+// ─────────────────────────────────────────────
+forceStopBtn.addEventListener("click", async () => {
+  forceStopBtn.disabled = true;
+  forceStopBtn.textContent = "Stopping…";
+  await bg("forceStop").catch(() => {});
+  forceStopBtn.disabled = false;
+  forceStopBtn.classList.add("hidden");
+  const status = await bg("getStatus").catch(() => ({ isRecording: false }));
+  applyStatus(status);
+});
+
+// ─────────────────────────────────────────────
 // SELLER DETECTION
 // ─────────────────────────────────────────────
 async function detectSeller() {
@@ -235,6 +260,10 @@ async function detectSeller() {
 // INIT
 // ─────────────────────────────────────────────
 (async () => {
+  // Resolve active tab first so all bg() calls include the correct tabId.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab) activeTabId = tab.id;
+
   await detectSeller();
   const status = await bg("getStatus").catch(() => ({ isRecording: false }));
   applyStatus(status);
