@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StreamSweep</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,39 +18,35 @@
 
     /* ── Header ─────────────────────────────── */
     .header {
-      padding: 14px 16px;
+      padding: 13px 16px;
       border-bottom: 1px solid #1e293b;
       display: flex;
       align-items: center;
       gap: 10px;
     }
     .logo-mark {
-      width: 30px; height: 30px;
+      width: 28px; height: 28px;
       background: #10b981;
-      border-radius: 8px;
+      border-radius: 7px;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
-    .logo-mark svg { display: block; }
-    .brand-name { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
-    .brand-sub  { font-size: 10px; color: #475569; font-weight: 500; margin-top: 1px; }
+    .brand-name { font-size: 14px; font-weight: 700; color: #fff; letter-spacing: -0.2px; }
+    .brand-sub  { font-size: 10px; color: #475569; margin-top: 1px; }
 
     /* ── Body ────────────────────────────────── */
-    .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+    .body { padding: 13px 16px; display: flex; flex-direction: column; gap: 11px; }
 
     /* ── Seller row ──────────────────────────── */
     .seller-row {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 10px;
-      padding: 10px 12px;
-      display: flex; align-items: center; gap: 10px;
+      background: #1e293b; border: 1px solid #334155; border-radius: 9px;
+      padding: 9px 12px; display: flex; align-items: center; gap: 9px;
     }
-    .seller-indicator {
-      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background 0.2s;
+    .seller-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
     }
-    .seller-indicator.on  { background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.15); }
-    .seller-indicator.off { background: #334155; }
+    .seller-dot.on  { background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.15); }
+    .seller-dot.off { background: #334155; }
     .seller-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
     .seller-value { font-size: 13px; font-weight: 600; color: #fff; }
     .seller-value.dim { color: #475569; font-style: italic; font-weight: 400; }
@@ -59,92 +54,130 @@
     /* ── Quality ─────────────────────────────── */
     .section-label {
       font-size: 10px; font-weight: 600; text-transform: uppercase;
-      letter-spacing: .06em; color: #475569; margin-bottom: 7px;
+      letter-spacing: .06em; color: #475569; margin-bottom: 6px;
     }
     .quality-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .q-option {
-      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
-      padding: 9px 10px; cursor: pointer; display: flex; align-items: center;
-      gap: 8px; transition: border-color .15s, background .15s; user-select: none;
+      background: #1e293b; border: 1px solid #334155; border-radius: 7px;
+      padding: 8px 10px; cursor: pointer; display: flex; align-items: center;
+      gap: 7px; transition: border-color .15s, background .15s; user-select: none;
     }
     .q-option:hover:not(.selected) { background: #243346; border-color: #475569; }
-    .q-option.selected {
-      background: rgba(16,185,129,.08); border-color: #10b981;
-    }
+    .q-option.selected { background: rgba(16,185,129,.08); border-color: #10b981; }
     .q-radio {
-      width: 14px; height: 14px; border-radius: 50%;
-      border: 2px solid #475569; flex-shrink: 0; transition: all .15s;
-      position: relative;
+      width: 13px; height: 13px; border-radius: 50%; border: 2px solid #475569;
+      flex-shrink: 0; transition: all .15s; position: relative;
     }
-    .q-option.selected .q-radio {
-      border-color: #10b981; background: #10b981;
-    }
+    .q-option.selected .q-radio { border-color: #10b981; background: #10b981; }
     .q-option.selected .q-radio::after {
-      content: ""; position: absolute; inset: 3px;
-      background: #fff; border-radius: 50%;
+      content: ""; position: absolute; inset: 3px; background: #fff; border-radius: 50%;
     }
     .q-label { font-size: 13px; font-weight: 500; color: #e2e8f0; }
     .q-badge {
-      margin-left: auto; font-size: 9px; font-weight: 600; letter-spacing: .03em;
-      color: #10b981; background: rgba(16,185,129,.1);
-      border: 1px solid rgba(16,185,129,.2); border-radius: 4px; padding: 1px 5px;
+      margin-left: auto; font-size: 9px; font-weight: 600; color: #10b981;
+      background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.2);
+      border-radius: 4px; padding: 1px 5px;
     }
 
-    /* ── Timer row ───────────────────────────── */
-    .timer-row {
-      display: flex; align-items: center; justify-content: center; gap: 10px;
-      background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.2);
-      border-radius: 8px; padding: 9px;
+    /* ── Recording Panel ─────────────────────── */
+    .rec-panel {
+      background: rgba(239,68,68,.05); border: 1px solid rgba(239,68,68,.18);
+      border-radius: 10px; padding: 12px;
+      display: flex; flex-direction: column; gap: 10px;
     }
-    .rec-dot {
-      width: 8px; height: 8px; border-radius: 50%; background: #ef4444;
-      animation: blink 1.2s ease-in-out infinite;
+
+    /* LIVE + timer row */
+    .rec-top { display: flex; align-items: center; justify-content: space-between; }
+    .live-badge {
+      display: flex; align-items: center; gap: 5px;
+      background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3);
+      border-radius: 20px; padding: 3px 9px;
+      color: #ef4444; font-size: 10px; font-weight: 700; letter-spacing: .1em;
     }
-    @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.25 } }
-    .timer-display {
+    .live-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: #ef4444;
+      animation: livepulse 1.2s ease-in-out infinite;
+    }
+    @keyframes livepulse { 0%,100%{opacity:1} 50%{opacity:.2} }
+    .rec-timer {
       font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
-      font-size: 18px; font-weight: 700; color: #ef4444; letter-spacing: .1em;
+      font-size: 22px; font-weight: 700; color: #f1f5f9; letter-spacing: .08em;
     }
 
-    /* ── Record / Stop button ────────────────── */
+    /* Stats row */
+    .rec-stats {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; color: #64748b;
+    }
+    .stat-sep { color: #334155; }
+
+    /* Force Stop */
+    .force-stop-btn {
+      width: 100%; padding: 9px; border-radius: 8px;
+      border: 1px solid rgba(239,68,68,.35);
+      background: rgba(239,68,68,.1); color: #fca5a5;
+      cursor: pointer; font-size: 13px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: background .15s;
+    }
+    .force-stop-btn:hover:not(:disabled) { background: rgba(239,68,68,.2); }
+    .force-stop-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ── Buttons ─────────────────────────────── */
     .action-btn {
-      width: 100%; padding: 11px; border-radius: 10px; border: none;
-      cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: .01em;
+      width: 100%; padding: 11px; border-radius: 9px; border: none;
+      cursor: pointer; font-size: 14px; font-weight: 700;
       display: flex; align-items: center; justify-content: center; gap: 8px;
       transition: background .15s, opacity .15s;
     }
     .action-btn.start { background: #10b981; color: #fff; }
     .action-btn.start:hover:not(:disabled) { background: #059669; }
-    .action-btn.stop  { background: #ef4444; color: #fff; }
-    .action-btn.stop:hover:not(:disabled)  { background: #dc2626; }
-    .action-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .action-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* Clear-stuck button */
+    .clear-stuck-btn {
+      width: 100%; padding: 9px; border-radius: 8px;
+      border: 1px solid rgba(251,191,36,.3);
+      background: rgba(251,191,36,.07); color: #fbbf24;
+      cursor: pointer; font-size: 12px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: background .15s;
+    }
+    .clear-stuck-btn:hover { background: rgba(251,191,36,.14); }
 
     /* ── Saved box ───────────────────────────── */
     .saved-box {
-      background: rgba(16,185,129,.07); border: 1px solid rgba(16,185,129,.2);
-      border-radius: 10px; padding: 11px 12px;
+      background: rgba(16,185,129,.06); border: 1px solid rgba(16,185,129,.2);
+      border-radius: 9px; padding: 11px 12px;
     }
-    .saved-title {
+    .saved-header {
       display: flex; align-items: center; gap: 6px;
-      font-size: 13px; font-weight: 700; color: #10b981; margin-bottom: 6px;
+      font-size: 12px; font-weight: 700; color: #10b981; margin-bottom: 7px;
     }
+    .saved-files { display: flex; flex-direction: column; gap: 5px; }
+    .saved-file { background: rgba(255,255,255,.04); border-radius: 6px; padding: 6px 9px; }
     .saved-filename {
       font-family: ui-monospace, "SF Mono", monospace;
-      font-size: 11px; color: #94a3b8; word-break: break-all; margin-bottom: 3px;
+      font-size: 10px; color: #94a3b8; word-break: break-all; margin-bottom: 2px;
     }
-    .saved-meta { font-size: 11px; color: #475569; }
+    .saved-meta { font-size: 11px; color: #475569; display: flex; align-items: center; gap: 6px; }
+    .open-folder-btn {
+      background: none; border: none; color: #10b981; cursor: pointer;
+      font-size: 11px; font-weight: 600; padding: 0; text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .open-folder-btn:hover { color: #34d399; }
 
     /* ── Error box ───────────────────────────── */
     .error-box {
       background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.2);
       border-radius: 8px; padding: 9px 12px; font-size: 12px; color: #fca5a5;
-      line-height: 1.4;
+      line-height: 1.45;
     }
 
     /* ── Footer ──────────────────────────────── */
     .footer {
-      padding: 10px 16px;
-      border-top: 1px solid #1e293b;
+      padding: 9px 16px; border-top: 1px solid #1e293b;
       display: flex; justify-content: center;
     }
     .process-link {
@@ -152,18 +185,6 @@
       display: flex; align-items: center; gap: 5px; transition: color .15s;
     }
     .process-link:hover { color: #10b981; }
-    .process-link svg { flex-shrink: 0; }
-
-    /* ── Force Stop button ───────────────────── */
-    .force-stop-btn {
-      width: 100%; padding: 9px; border-radius: 8px;
-      border: 1px solid rgba(251,191,36,.3);
-      background: rgba(251,191,36,.06); color: #fbbf24;
-      cursor: pointer; font-size: 12px; font-weight: 600;
-      display: flex; align-items: center; justify-content: center; gap: 7px;
-      transition: background .15s, border-color .15s;
-    }
-    .force-stop-btn:hover { background: rgba(251,191,36,.14); border-color: rgba(251,191,36,.5); }
 
     /* ── Utility ─────────────────────────────── */
     .hidden { display: none !important; }
@@ -171,93 +192,108 @@
 </head>
 <body>
 
-<!-- ── Header ──────────────────────────────── -->
+<!-- Header -->
 <div class="header">
   <div class="logo-mark">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="white">
       <path d="M13 2L3 14h8l-2 8 12-12h-8z"/>
     </svg>
   </div>
   <div>
     <div class="brand-name">StreamSweep</div>
-    <div class="brand-sub">Stream Recorder · MV3</div>
+    <div class="brand-sub">Live Stream Recorder</div>
   </div>
 </div>
 
-<!-- ── Body ────────────────────────────────── -->
+<!-- Body -->
 <div class="body">
 
   <!-- Seller detection -->
   <div class="seller-row">
-    <span class="seller-indicator off" id="sellerDot"></span>
+    <span class="seller-dot off" id="sellerDot"></span>
     <div style="min-width:0;flex:1">
       <div class="seller-label">Detected streamer</div>
       <div class="seller-value dim" id="sellerDisplay">Detecting…</div>
     </div>
   </div>
 
-  <!-- Quality selector -->
+  <!-- Quality selector (hidden while recording) -->
   <div id="qualitySection">
     <div class="section-label">Recording quality</div>
     <div class="quality-grid">
-      <div class="q-option selected" data-quality="720p" id="q720">
+      <div class="q-option selected" data-quality="720p">
         <div class="q-radio"></div>
         <span class="q-label">720p</span>
         <span class="q-badge">rec</span>
       </div>
-      <div class="q-option" data-quality="1080p" id="q1080">
+      <div class="q-option" data-quality="1080p">
         <div class="q-radio"></div>
         <span class="q-label">1080p</span>
       </div>
     </div>
   </div>
 
-  <!-- Timer (shown while recording) -->
-  <div class="timer-row hidden" id="timerRow">
-    <span class="rec-dot"></span>
-    <span class="timer-display" id="timerDisplay">00:00:00</span>
+  <!-- Recording panel (hidden while idle) -->
+  <div class="rec-panel hidden" id="recPanel">
+    <div class="rec-top">
+      <div class="live-badge"><span class="live-dot"></span>LIVE</div>
+      <span class="rec-timer" id="recTimer">00:00:00</span>
+    </div>
+    <div class="rec-stats">
+      <span id="statChunks">0 chunks</span>
+      <span class="stat-sep">·</span>
+      <span id="statLastSave">no saves yet</span>
+      <span class="stat-sep">·</span>
+      <span id="statParts">—</span>
+    </div>
+    <button class="force-stop-btn" id="forceStopBtn">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+      </svg>
+      Force Stop
+    </button>
   </div>
 
-  <!-- Record / Stop button -->
+  <!-- Start button (hidden while recording) -->
   <button class="action-btn start" id="actionBtn">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
       <circle cx="12" cy="12" r="10"/>
     </svg>
     Start Recording
   </button>
 
-  <!-- Saved confirmation -->
+  <!-- Clear stuck state button -->
+  <button class="clear-stuck-btn hidden" id="clearStuckBtn">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+    Clear stuck recording
+  </button>
+
+  <!-- Saved files -->
   <div class="saved-box hidden" id="savedBox">
-    <div class="saved-title">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+    <div class="saved-header">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
         <path d="M20 6L9 17l-5-5"/>
       </svg>
-      File saved!
+      Saved to Stream Sweep Streams
     </div>
-    <div class="saved-filename" id="savedFilename"></div>
-    <div class="saved-meta" id="savedMeta"></div>
+    <div class="saved-files" id="savedFilesList"></div>
   </div>
 
   <!-- Error -->
   <div class="error-box hidden" id="errorBox"></div>
 
-  <!-- Force Stop (shown when a capture is stuck with no active recording) -->
-  <button class="force-stop-btn hidden" id="forceStopBtn">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-    </svg>
-    Force Stop Stuck Capture
-  </button>
-
 </div>
 
-<!-- ── Footer ──────────────────────────────── -->
+<!-- Footer -->
 <div class="footer">
   <a href="https://streamsweep.ai" target="_blank" rel="noopener" class="process-link">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
     </svg>
-    How to process with StreamSweep
+    Process with StreamSweep AI
     <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
       <path d="M7 17L17 7M17 7H7M17 7v10"/>
     </svg>

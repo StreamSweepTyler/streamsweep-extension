@@ -1,337 +1,403 @@
 // background.js — StreamSweep MV3 Service Worker
+// All state lives here. offscreen.js only operates MediaRecorder.
+// Downloads only happen here. No shared mutable state between files.
 
-// ─────────────────────────────────────────────
-// STATE — per-tab Map
-// Persisted to chrome.storage.session so state survives SW suspension.
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// tabId → { isRecording, startTime, sellerName, quality, savedFiles,
+//            error, chunkCount, lastSaveTime, partNumber }
+// ─────────────────────────────────────────────────────────────────────────────
 const recordings = new Map();
-// tabId → { isRecording, startTime, sellerName, quality, savedFile, error }
 
 function getTabState(tabId) {
   return recordings.get(tabId) ?? {
-    isRecording: false,
-    startTime:   null,
-    sellerName:  null,
-    quality:     "720p",
-    savedFile:   null,
-    error:       null,
+    isRecording:  false,
+    startTime:    null,
+    sellerName:   null,
+    quality:      "720p",
+    savedFiles:   [],
+    error:        null,
+    chunkCount:   0,
+    lastSaveTime: null,
+    partNumber:   1,
   };
 }
 
 async function persistState() {
   try {
     const obj = {};
-    for (const [tabId, state] of recordings) obj[String(tabId)] = state;
-    await chrome.storage.session.set({ ssRecordings: obj });
-  } catch { /* not critical */ }
+    for (const [id, s] of recordings) obj[id] = s;
+    await chrome.storage.session.set({ ssRec: obj });
+  } catch { /* non-critical */ }
 }
 
 async function restoreState() {
   try {
-    const { ssRecordings } = await chrome.storage.session.get("ssRecordings");
-    if (!ssRecordings) return;
-    for (const [key, state] of Object.entries(ssRecordings)) {
-      recordings.set(Number(key), state);
-    }
+    const { ssRec } = await chrome.storage.session.get("ssRec");
+    if (!ssRec) return;
+    for (const [k, v] of Object.entries(ssRec)) recordings.set(Number(k), v);
   } catch {}
 }
 
-// ─────────────────────────────────────────────
-// DOWNLOAD LISTENER — must be registered at the TOP LEVEL so Chrome MV3
-// service workers pick it up on every wake cycle.
-// offscreen.js sends DOWNLOAD_RECORDING with base64; we call chrome.downloads
-// here because chrome.downloads is only available in the service worker.
-// ─────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type !== "DOWNLOAD_RECORDING") return; // let other listeners handle it
+// ─────────────────────────────────────────────────────────────────────────────
+// TOP-LEVEL LISTENERS
+// These MUST be registered synchronously at module scope for Chrome MV3.
+// Any message that arrives while the SW is sleeping will re-wake it and
+// this listener will be re-registered before the handler runs.
+// ─────────────────────────────────────────────────────────────────────────────
 
-  const dataUrl = `data:${message.mimeType};base64,${message.base64}`;
+// ── offscreen → background: download a recording ──────────────────────────
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== "DOWNLOAD_RECORDING") return; // not for us
+
+  const { tabId, base64, mimeType, filename, size, isPartial, partNumber } = msg;
+  const dataUrl = `data:${mimeType};base64,${base64}`;
 
   chrome.downloads.download(
-    {
-      url:      dataUrl,
-      filename: `Stream Sweep Streams/${message.filename}`,
-      saveAs:   false,
-    },
+    { url: dataUrl, filename: `Stream Sweep Streams/${filename}`, saveAs: false },
     (downloadId) => {
       if (chrome.runtime.lastError) {
         console.error("[StreamSweep] Download failed:", chrome.runtime.lastError.message);
-        // Update state to reflect the error
-        const tabId = message.tabId;
-        if (tabId != null) {
-          recordings.set(tabId, {
-            ...getTabState(tabId),
-            isRecording: false,
-            error: `Download failed: ${chrome.runtime.lastError.message}`,
-          });
-          persistState();
-          updateIcon();
-        }
+        const cur = getTabState(tabId);
+        recordings.set(tabId, {
+          ...cur,
+          isRecording: isPartial ? cur.isRecording : false,
+          error: `Download failed: ${chrome.runtime.lastError.message}`,
+        });
       } else {
-        // Download queued successfully — update UI state
-        const tabId = message.tabId;
-        if (tabId != null) {
-          recordings.set(tabId, {
-            ...getTabState(tabId),
-            isRecording: false,
-            savedFile: {
-              filename:  message.filename,
-              size:      message.size,
-              isPartial: message.isPartial ?? false,
-            },
-            error: null,
-          });
-          persistState();
-          updateIcon();
+        const cur = getTabState(tabId);
+        const savedFiles = [
+          ...cur.savedFiles,
+          { filename, size, isPartial: !!isPartial, partNumber: partNumber ?? null, downloadId },
+        ];
+        recordings.set(tabId, {
+          ...cur,
+          isRecording: isPartial ? cur.isRecording : false,
+          savedFiles,
+          error: null,
+        });
+        // Close offscreen once the final file for this tab is saved
+        if (!isPartial) {
+          const anyRecording = [...recordings.values()].some((r) => r.isRecording);
+          if (!anyRecording) closeOffscreen();
         }
-        // Close the offscreen doc once no recordings remain
-        const anyRecording = [...recordings.values()].some((r) => r.isRecording);
-        if (!anyRecording) closeOffscreen();
       }
+      persistState();
+      updateIcon();
     },
   );
 
-  sendResponse({ success: true });
-  return true;
+  sendResponse({ ok: true });
+  return true; // keep channel open for async
 });
 
-// ─────────────────────────────────────────────
-// ICON GENERATION (OffscreenCanvas — works in SW)
-// ─────────────────────────────────────────────
-function drawLightningIcon(size, color) {
-  const canvas = new OffscreenCanvas(size, size);
-  const ctx    = canvas.getContext("2d");
-  const s      = size;
+// ── offscreen → background: live state update (chunk count, save time) ────
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type !== "stateUpdate") return;
+  const cur = getTabState(msg.tabId);
+  recordings.set(msg.tabId, {
+    ...cur,
+    chunkCount:   msg.chunkCount ?? cur.chunkCount,
+    lastSaveTime: msg.lastSaveTime ?? cur.lastSaveTime,
+    partNumber:   msg.partNumber ?? cur.partNumber,
+  });
+  // No persistState() here — too frequent; popup reads directly from Map
+});
 
+// ── offscreen → background: recording error ────────────────────────────────
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type !== "recordingError") return;
+  const cur = getTabState(msg.tabId);
+  recordings.set(msg.tabId, {
+    ...cur,
+    isRecording: false,
+    error: msg.error || "Recording failed.",
+  });
+  persistState();
+  updateIcon();
+  const anyRecording = [...recordings.values()].some((r) => r.isRecording);
+  if (!anyRecording) closeOffscreen();
+});
+
+// ── SW keep-alive port from offscreen document ─────────────────────────────
+// Keeping an open port prevents Chrome from suspending the service worker
+// while recording is active.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "ss-keepalive") return;
+  // Just holding the port open does the work; nothing else needed here.
+  port.onDisconnect.addListener(() => { /* offscreen closed or reconnecting */ });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ICON
+// ─────────────────────────────────────────────────────────────────────────────
+function drawIcon(size, rec) {
+  const c   = new OffscreenCanvas(size, size);
+  const ctx = c.getContext("2d");
+  const s   = size;
   ctx.clearRect(0, 0, s, s);
-  ctx.fillStyle = color === "#ef4444" ? "rgba(239,68,68,0.15)" : "rgba(16,185,129,0.15)";
+  ctx.fillStyle = rec ? "rgba(239,68,68,.15)" : "rgba(16,185,129,.15)";
+  ctx.beginPath(); ctx.roundRect(0, 0, s, s, s * 0.22); ctx.fill();
+  ctx.fillStyle = rec ? "#ef4444" : "#10b981";
   ctx.beginPath();
-  ctx.roundRect(0, 0, s, s, s * 0.22);
-  ctx.fill();
-
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(s * 0.60, s * 0.04);
-  ctx.lineTo(s * 0.20, s * 0.54);
-  ctx.lineTo(s * 0.44, s * 0.54);
-  ctx.lineTo(s * 0.36, s * 0.96);
-  ctx.lineTo(s * 0.80, s * 0.44);
-  ctx.lineTo(s * 0.56, s * 0.44);
-  ctx.closePath();
-  ctx.fill();
-
+  ctx.moveTo(s*.60,s*.04); ctx.lineTo(s*.20,s*.54); ctx.lineTo(s*.44,s*.54);
+  ctx.lineTo(s*.36,s*.96); ctx.lineTo(s*.80,s*.44); ctx.lineTo(s*.56,s*.44);
+  ctx.closePath(); ctx.fill();
   return ctx.getImageData(0, 0, s, s);
 }
 
-async function setIcon(recording) {
-  const color = recording ? "#ef4444" : "#10b981";
+async function setIcon(rec) {
   try {
-    await chrome.action.setIcon({
-      imageData: {
-        16: drawLightningIcon(16, color),
-        32: drawLightningIcon(32, color),
-        48: drawLightningIcon(48, color),
-      },
-    });
-    if (recording) {
-      await chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
-      await chrome.action.setBadgeText({ text: "REC" });
-    } else {
-      await chrome.action.setBadgeText({ text: "" });
-    }
-  } catch (e) {
-    console.warn("[StreamSweep] Icon update failed:", e);
-  }
+    await chrome.action.setIcon({ imageData: { 16: drawIcon(16,rec), 32: drawIcon(32,rec), 48: drawIcon(48,rec) } });
+    await chrome.action.setBadgeBackgroundColor({ color: rec ? "#ef4444" : "#10b981" });
+    await chrome.action.setBadgeText({ text: rec ? "REC" : "" });
+  } catch {}
 }
 
 async function updateIcon() {
-  const anyRecording = [...recordings.values()].some((r) => r.isRecording);
-  await setIcon(anyRecording);
+  await setIcon([...recordings.values()].some((r) => r.isRecording));
 }
 
-// ─────────────────────────────────────────────
-// STARTUP — clean up stale captures
-// ─────────────────────────────────────────────
+setIcon(false);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERVALS — keep-alive ping (15 s) + health check (20 s)
+// Only run while at least one recording is active.
+// ─────────────────────────────────────────────────────────────────────────────
+let keepAliveTimer   = null;
+let healthCheckTimer = null;
+const healthFailures = new Map(); // tabId → consecutive failure count
+
+function startIntervals() {
+  if (keepAliveTimer) return; // already running
+
+  // Ping the offscreen document to confirm it's still alive
+  keepAliveTimer = setInterval(() => {
+    chrome.runtime.sendMessage({ action: "ping" }).catch(() => {});
+  }, 15_000);
+
+  // Check each active recording's MediaRecorder state
+  healthCheckTimer = setInterval(async () => {
+    const activeTabIds = [...recordings.entries()]
+      .filter(([, s]) => s.isRecording)
+      .map(([id]) => id);
+
+    for (const tabId of activeTabIds) {
+      try {
+        const resp = await Promise.race([
+          chrome.runtime.sendMessage({ action: "healthCheck", tabId }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+        ]);
+        if (resp?.recorderState === "recording") {
+          healthFailures.delete(tabId);
+        } else {
+          handleHealthFailure(tabId, resp?.recorderState ?? "unknown");
+        }
+      } catch (err) {
+        handleHealthFailure(tabId, `no response: ${err.message}`);
+      }
+    }
+  }, 20_000);
+}
+
+function stopIntervals() {
+  if (keepAliveTimer)   { clearInterval(keepAliveTimer);   keepAliveTimer   = null; }
+  if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null; }
+}
+
+function handleHealthFailure(tabId, reason) {
+  const n = (healthFailures.get(tabId) ?? 0) + 1;
+  healthFailures.set(tabId, n);
+  console.warn(`[StreamSweep] Health check failed tab=${tabId} reason=${reason} attempt=${n}`);
+
+  if (n >= 3) {
+    healthFailures.delete(tabId);
+    // Ask offscreen to flush whatever chunks it has and stop
+    chrome.runtime.sendMessage({ action: "forcePartialSave", tabId }).catch(() => {});
+    const cur = getTabState(tabId);
+    recordings.set(tabId, {
+      ...cur,
+      error: "Recorder became unresponsive — partial data saved.",
+    });
+    persistState();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STARTUP — release orphaned captures, restore persisted state
+// ─────────────────────────────────────────────────────────────────────────────
 async function handleStartup() {
-  await closeOffscreen();
+  await closeOffscreen(); // releases any captured streams → restores tab audio
   await restoreState();
 
-  // Mark any in-progress recordings as interrupted (the offscreen doc is gone)
+  // Any recording that was "active" when the SW restarted is now lost
   let changed = false;
-  for (const [tabId, state] of recordings) {
-    if (state.isRecording) {
-      recordings.set(tabId, { ...state, isRecording: false, error: "Recording interrupted by extension restart." });
+  for (const [id, s] of recordings) {
+    if (s.isRecording) {
+      recordings.set(id, { ...s, isRecording: false, error: "Interrupted by extension restart." });
       changed = true;
     }
   }
   if (changed) await persistState();
 
+  stopIntervals();
   await updateIcon();
 }
 
 chrome.runtime.onStartup.addListener(handleStartup);
 chrome.runtime.onInstalled.addListener(handleStartup);
 
-// ─────────────────────────────────────────────
-// OFFSCREEN DOCUMENT HELPERS
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// OFFSCREEN DOCUMENT
+// ─────────────────────────────────────────────────────────────────────────────
 async function offscreenExists() {
   try {
-    const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
-    return contexts.length > 0;
-  } catch {
-    return false;
-  }
+    return (await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] })).length > 0;
+  } catch { return false; }
 }
 
 async function closeOffscreen() {
-  try {
-    if (await offscreenExists()) await chrome.offscreen.closeDocument();
-  } catch { /* ignore */ }
+  try { if (await offscreenExists()) await chrome.offscreen.closeDocument(); } catch {}
 }
 
 async function ensureOffscreen() {
   if (!(await offscreenExists())) {
     await chrome.offscreen.createDocument({
-      url: "offscreen.html",
-      reasons: ["USER_MEDIA", "AUDIO_PLAYBACK"],
-      justification: "Capture tab audio/video and play it back through speakers while recording",
+      url:           "offscreen.html",
+      reasons:       ["USER_MEDIA", "AUDIO_PLAYBACK"],
+      justification: "Capture tab audio/video; split audio so user still hears stream while recording",
     });
-    // Allow the document to load and register its message listener.
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 200)); // let script load + listener register
   }
 }
 
-// ─────────────────────────────────────────────
-// tabCapture helper (callback → Promise)
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// tabCapture (callback → Promise)
+// ─────────────────────────────────────────────────────────────────────────────
 function getMediaStreamId(tabId) {
   return new Promise((resolve, reject) => {
-    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else {
-        resolve(streamId);
-      }
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
+      chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(id);
     });
   });
 }
 
-// ─────────────────────────────────────────────
-// GENERAL MESSAGE HANDLER (popup ↔ background, offscreen errors)
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// POPUP MESSAGE HANDLER
+// ─────────────────────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  // DOWNLOAD_RECORDING is handled by the dedicated top-level listener above.
-  if (msg.type === "DOWNLOAD_RECORDING") return;
+  // type-based messages are handled by the top-level listeners above
+  if (msg.type) return;
 
   dispatch(msg)
     .then(sendResponse)
-    .catch((err) => sendResponse({ success: false, error: err.message }));
+    .catch((err) => sendResponse({ ok: false, error: err.message }));
   return true;
 });
 
 async function dispatch(msg) {
   switch (msg.action) {
-    // ── Popup: start recording ──────────────────────────────────────────────
+    // ── Start ────────────────────────────────────────────────────────────────
     case "startRecording": {
       const { tabId, quality, sellerName } = msg;
 
       if (recordings.get(tabId)?.isRecording) {
-        return { success: false, error: "This tab is already being recorded." };
+        return { ok: false, error: "This tab is already being recorded." };
       }
 
       let streamId;
       try {
         streamId = await getMediaStreamId(tabId);
       } catch (err) {
-        const errMsg = err.message || "";
-        if (errMsg.includes("active stream") || errMsg.includes("already being captured")) {
-          throw new Error("This tab already has an active capture stream. Use Force Stop to clear it, then try again.");
+        const m = err.message || "";
+        if (m.includes("active stream") || m.includes("already being captured")) {
+          throw new Error("Tab has an active capture stream. Use Force Stop to clear it first.");
         }
-        if (errMsg.includes("Cannot access") || errMsg.includes("chrome://")) {
-          throw new Error("This tab cannot be captured (browser internal pages are not allowed).");
+        if (m.includes("chrome://") || m.includes("Cannot access")) {
+          throw new Error("This tab cannot be captured (browser-internal pages are off-limits).");
         }
-        if (errMsg.includes("incognito")) {
-          throw new Error("Enable extension access in Incognito mode to record this tab.");
+        if (m.includes("incognito")) {
+          throw new Error("Enable this extension in Incognito mode to record this tab.");
         }
-        throw new Error(`Capture failed: ${errMsg}`);
+        throw new Error(`Capture failed: ${m}`);
       }
 
       recordings.set(tabId, {
-        isRecording: true,
-        startTime:   Date.now(),
+        isRecording:  true,
+        startTime:    Date.now(),
         sellerName,
         quality,
-        savedFile:   null,
-        error:       null,
+        savedFiles:   [],
+        error:        null,
+        chunkCount:   0,
+        lastSaveTime: null,
+        partNumber:   1,
       });
       await persistState();
       await updateIcon();
+      startIntervals();
+
       await ensureOffscreen();
 
       const result = await chrome.runtime.sendMessage({
-        action: "startCapture",
-        tabId,
-        streamId,
-        quality,
-        seller: sellerName || "",
-      }).catch((err) => ({ success: false, error: err.message }));
+        action: "startCapture", tabId, streamId, quality, seller: sellerName || "",
+      }).catch((e) => ({ ok: false, error: e.message }));
 
-      if (!result?.success) {
+      if (!result?.ok) {
         recordings.delete(tabId);
         await persistState();
         await updateIcon();
-        throw new Error(result?.error || "Offscreen capture failed to start.");
+        const anyRec = [...recordings.values()].some((r) => r.isRecording);
+        if (!anyRec) { stopIntervals(); await closeOffscreen(); }
+        throw new Error(result?.error || "Offscreen failed to start capture.");
       }
 
-      return { success: true };
+      return { ok: true };
     }
 
-    // ── Popup: stop recording ───────────────────────────────────────────────
+    // ── Stop ─────────────────────────────────────────────────────────────────
     case "stopRecording": {
       const { tabId } = msg;
       if (!recordings.get(tabId)?.isRecording) {
-        return { success: false, error: "Not currently recording this tab." };
+        return { ok: false, error: "Not recording this tab." };
       }
       chrome.runtime.sendMessage({ action: "stopCapture", tabId }).catch(() => {});
-      return { success: true };
+      return { ok: true };
     }
 
-    // ── Popup: poll status ──────────────────────────────────────────────────
+    // ── Status (popup polls this every second) ────────────────────────────────
     case "getStatus": {
       const { tabId }    = msg;
-      const entry        = getTabState(tabId);
-      const elapsed      = entry.isRecording && entry.startTime
-        ? Math.floor((Date.now() - entry.startTime) / 1000)
-        : 0;
-      const offscreenUp  = await offscreenExists();
+      const s            = getTabState(tabId);
+      const elapsed      = s.isRecording && s.startTime
+        ? Math.floor((Date.now() - s.startTime) / 1000) : 0;
+      const offUp        = await offscreenExists();
       const anyRecording = [...recordings.values()].some((r) => r.isRecording);
-      const stuckCapture = offscreenUp && !anyRecording;
-      return { ...entry, elapsed, stuckCapture };
+      const stuckCapture = offUp && !anyRecording;
+      return { ...s, elapsed, stuckCapture };
     }
 
-    // ── Popup: force-stop all captures ──────────────────────────────────────
+    // ── Force Stop ────────────────────────────────────────────────────────────
     case "forceStop": {
+      chrome.runtime.sendMessage({ action: "stopAll" }).catch(() => {});
       await closeOffscreen();
-      for (const [tabId, state] of recordings) {
-        if (state.isRecording) recordings.set(tabId, { ...state, isRecording: false, error: null });
+      for (const [id, s] of recordings) {
+        if (s.isRecording) recordings.set(id, { ...s, isRecording: false, error: null });
       }
+      stopIntervals();
       await persistState();
       await updateIcon();
-      return { success: true };
+      return { ok: true };
     }
 
-    // ── Offscreen: recording error ──────────────────────────────────────────
-    case "recordingError": {
-      const { tabId, error } = msg;
-      recordings.set(tabId, { ...getTabState(tabId), isRecording: false, error: error || "Recording failed." });
-      await persistState();
-      if (![...recordings.values()].some((r) => r.isRecording)) await closeOffscreen();
-      await updateIcon();
-      return { success: true };
+    // ── Show saved file in Finder/Explorer ───────────────────────────────────
+    case "showDownload": {
+      const { downloadId } = msg;
+      if (downloadId != null) chrome.downloads.show(downloadId);
+      return { ok: true };
     }
 
     default:
-      return { success: false, error: `Unknown action: ${msg.action}` };
+      return { ok: false, error: `Unknown action: ${msg.action}` };
   }
 }
