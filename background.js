@@ -104,6 +104,33 @@ chrome.runtime.onMessage.addListener((msg) => {
   // No persistState() here — too frequent; popup reads directly from Map
 });
 
+// ── popup → background: force-stop all recordings ─────────────────────────
+// Top-level so it works even when the service worker was just woken from sleep.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== "FORCE_STOP") return;
+
+  console.log("[StreamSweep] FORCE_STOP received — killing all recordings");
+
+  // Tell offscreen to flush partial saves before we destroy it
+  chrome.runtime.sendMessage({ action: "stopAll" }).catch(() => {});
+
+  // Give FileReader + download initiation 1.5 s, then force-close regardless
+  setTimeout(async () => {
+    await closeOffscreen();
+
+    for (const [id, s] of recordings) {
+      if (s.isRecording) recordings.set(id, { ...s, isRecording: false, error: null });
+    }
+    stopIntervals();
+    await persistState();
+    await updateIcon();
+
+    sendResponse({ success: true });
+  }, 1500);
+
+  return true; // keep channel open for async sendResponse
+});
+
 // ── offscreen → background: recording error ────────────────────────────────
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type !== "recordingError") return;

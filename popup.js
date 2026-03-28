@@ -193,19 +193,20 @@ actionBtn.addEventListener("click", async () => {
 // ─────────────────────────────────────────────
 // FORCE STOP BUTTON (inside recording panel)
 // ─────────────────────────────────────────────
-forceStopBtn.addEventListener("click", async () => {
+forceStopBtn.addEventListener("click", () => {
   forceStopBtn.disabled    = true;
   forceStopBtn.textContent = "Stopping…";
 
-  await bg("stopRecording").catch(() => bg("forceStop"));
+  chrome.runtime.sendMessage({ type: "FORCE_STOP" }, (response) => {
+    console.log("Force stop response:", response);
 
-  // Wait briefly for download to initiate, then refresh
-  await new Promise((r) => setTimeout(r, 1500));
-  forceStopBtn.disabled    = false;
-  forceStopBtn.textContent = "Force Stop";
+    forceStopBtn.disabled    = false;
+    forceStopBtn.textContent = "Force Stop";
 
-  const status = await bg("getStatus").catch(() => ({ isRecording: false }));
-  applyStatus(status);
+    // Reset UI to idle state
+    applyStatus({ isRecording: false, savedFiles: [], stuckCapture: false, error: null, elapsed: 0 });
+    showError("Recording force stopped");
+  });
 });
 
 // ─────────────────────────────────────────────
