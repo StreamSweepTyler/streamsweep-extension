@@ -169,7 +169,10 @@ async function startCapture({ tabId, streamId, quality, seller }) {
       clearInterval(s.healthCheckTimer);
       s.stream.getTracks().forEach((t) => t.stop());
       s.audioCtx.close();
-      if (!s.stopping) saveChunks(tabId, false, s); // clean stop → final file
+      // Always save — s.isPartial was stamped by whoever triggered the stop.
+      // (The old guard `if (!s.stopping)` made saveChunks unreachable because
+      //  stopCapture always sets s.stopping = true before calling stop().)
+      saveChunks(tabId, s.isPartial ?? false, s);
     }
     if (sessions.size === 0) stopSWKeepAlive();
   };
@@ -178,8 +181,8 @@ async function startCapture({ tabId, streamId, quality, seller }) {
     console.error("[StreamSweep offscreen] MediaRecorder error:", e.error?.message);
     const s = sessions.get(tabId);
     if (s && !s.stopping) {
-      s.stopping = true;
-      saveChunks(tabId, true, s); // save what we have as a partial
+      s.stopping  = true;
+      s.isPartial = true; // onstop will fire after onerror and handle the save
       sendError(tabId, `MediaRecorder error: ${e.error?.message ?? "unknown"}`);
     }
   };
@@ -189,8 +192,9 @@ async function startCapture({ tabId, streamId, quality, seller }) {
     track.addEventListener("ended", () => {
       const s = sessions.get(tabId);
       if (s && !s.stopping && s.mediaRecorder.state === "recording") {
-        s.stopping = true;
-        s.mediaRecorder.stop(); // triggers onstop → saveChunks (partial flagged by null initChunk handling)
+        s.isPartial = true; // stream ended unexpectedly → save as partial
+        s.stopping  = true;
+        s.mediaRecorder.stop(); // triggers onstop → saveChunks with isPartial=true
       }
     });
   });
@@ -239,9 +243,10 @@ async function startCapture({ tabId, streamId, quality, seller }) {
 function stopCapture(tabId, isForced = false) {
   const s = sessions.get(tabId);
   if (!s || s.stopping) return;
-  s.stopping = true;
+  s.stopping  = true;
+  s.isPartial = isForced; // false = normal stop (final file), true = force stop (partial)
   if (s.mediaRecorder.state === "recording") {
-    s.mediaRecorder.stop(); // triggers onstop → saveChunks
+    s.mediaRecorder.stop(); // triggers onstop → saveChunks with s.isPartial
   } else {
     // Already stopped — save manually and clean up
     saveChunks(tabId, isForced, s);

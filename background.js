@@ -76,11 +76,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           savedFiles,
           error: null,
         });
-        // Close offscreen once the final file for this tab is saved
-        if (!isPartial) {
-          const anyRecording = [...recordings.values()].some((r) => r.isRecording);
-          if (!anyRecording) closeOffscreen();
-        }
+        // Close offscreen when no recordings remain (partial or final —
+        // force-stop saves as partial, so we must close on partial too)
+        const anyRecording = [...recordings.values()].some((r) => r.isRecording);
+        if (!anyRecording) closeOffscreen();
       }
       persistState();
       updateIcon();
@@ -111,13 +110,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   console.log("[StreamSweep] FORCE_STOP received — killing all recordings");
 
-  // Tell offscreen to flush partial saves before we destroy it
+  // Tell offscreen to stop and save all active sessions.
+  // offscreen's onstop handler calls saveChunks → FileReader → DOWNLOAD_RECORDING.
+  // The DOWNLOAD_RECORDING listener (above) handles the actual download and
+  // closes the offscreen document when no recordings remain.
+  // Do NOT call closeOffscreen() here — it would kill the FileReader mid-encode.
   chrome.runtime.sendMessage({ action: "stopAll" }).catch(() => {});
 
-  // Give FileReader + download initiation 1.5 s, then force-close regardless
+  // After 2 s the FileReader and download initiation should be complete.
+  // Clean up any state that wasn't already cleared by DOWNLOAD_RECORDING,
+  // then send the response so the popup can reset its UI.
   setTimeout(async () => {
-    await closeOffscreen();
-
     for (const [id, s] of recordings) {
       if (s.isRecording) recordings.set(id, { ...s, isRecording: false, error: null });
     }
@@ -126,7 +129,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     await updateIcon();
 
     sendResponse({ success: true });
-  }, 1500);
+  }, 2000);
 
   return true; // keep channel open for async sendResponse
 });
