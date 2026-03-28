@@ -138,7 +138,7 @@ async function dispatch(msg) {
   if (msg.type === "SAVE_RECORDING") {
     const dataUri = `data:${msg.mimeType};base64,${msg.base64}`;
     try {
-      await chrome.downloads.download({ url: dataUri, filename: msg.filename, saveAs: false });
+      await chrome.downloads.download({ url: dataUri, filename: `Stream Sweep Streams/${msg.filename}`, saveAs: false });
       state.isRecording = false;
       state.savedFile   = { filename: msg.filename, size: msg.size };
       await setIcon(false);
