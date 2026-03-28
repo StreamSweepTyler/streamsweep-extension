@@ -1,0 +1,15 @@
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Never commit recordings or keys
+*.webm
+*.mp4
+*.mov
+.env
+
+# Chrome extension build artifacts (if you add a build step later)
+dist/

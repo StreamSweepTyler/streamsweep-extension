@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StreamSweep</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 320px;
+      background: #0f172a;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Header ─────────────────────────────── */
+    .header {
+      padding: 14px 16px;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-mark {
+      width: 30px; height: 30px;
+      background: #10b981;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .logo-mark svg { display: block; }
+    .brand-name { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+    .brand-sub  { font-size: 10px; color: #475569; font-weight: 500; margin-top: 1px; }
+
+    /* ── Body ────────────────────────────────── */
+    .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+    /* ── Seller row ──────────────────────────── */
+    .seller-row {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .seller-indicator {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background 0.2s;
+    }
+    .seller-indicator.on  { background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.15); }
+    .seller-indicator.off { background: #334155; }
+    .seller-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+    .seller-value { font-size: 13px; font-weight: 600; color: #fff; }
+    .seller-value.dim { color: #475569; font-style: italic; font-weight: 400; }
+
+    /* ── Quality ─────────────────────────────── */
+    .section-label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .06em; color: #475569; margin-bottom: 7px;
+    }
+    .quality-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .q-option {
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      padding: 9px 10px; cursor: pointer; display: flex; align-items: center;
+      gap: 8px; transition: border-color .15s, background .15s; user-select: none;
+    }
+    .q-option:hover:not(.selected) { background: #243346; border-color: #475569; }
+    .q-option.selected {
+      background: rgba(16,185,129,.08); border-color: #10b981;
+    }
+    .q-radio {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid #475569; flex-shrink: 0; transition: all .15s;
+      position: relative;
+    }
+    .q-option.selected .q-radio {
+      border-color: #10b981; background: #10b981;
+    }
+    .q-option.selected .q-radio::after {
+      content: ""; position: absolute; inset: 3px;
+      background: #fff; border-radius: 50%;
+    }
+    .q-label { font-size: 13px; font-weight: 500; color: #e2e8f0; }
+    .q-badge {
+      margin-left: auto; font-size: 9px; font-weight: 600; letter-spacing: .03em;
+      color: #10b981; background: rgba(16,185,129,.1);
+      border: 1px solid rgba(16,185,129,.2); border-radius: 4px; padding: 1px 5px;
+    }
+
+    /* ── Timer row ───────────────────────────── */
+    .timer-row {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.2);
+      border-radius: 8px; padding: 9px;
+    }
+    .rec-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #ef4444;
+      animation: blink 1.2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.25 } }
+    .timer-display {
+      font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
+      font-size: 18px; font-weight: 700; color: #ef4444; letter-spacing: .1em;
+    }
+
+    /* ── Record / Stop button ────────────────── */
+    .action-btn {
+      width: 100%; padding: 11px; border-radius: 10px; border: none;
+      cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: .01em;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: background .15s, opacity .15s;
+    }
+    .action-btn.start { background: #10b981; color: #fff; }
+    .action-btn.start:hover:not(:disabled) { background: #059669; }
+    .action-btn.stop  { background: #ef4444; color: #fff; }
+    .action-btn.stop:hover:not(:disabled)  { background: #dc2626; }
+    .action-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* ── Saved box ───────────────────────────── */
+    .saved-box {
+      background: rgba(16,185,129,.07); border: 1px solid rgba(16,185,129,.2);
+      border-radius: 10px; padding: 11px 12px;
+    }
+    .saved-title {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; font-weight: 700; color: #10b981; margin-bottom: 6px;
+    }
+    .saved-filename {
+      font-family: ui-monospace, "SF Mono", monospace;
+      font-size: 11px; color: #94a3b8; word-break: break-all; margin-bottom: 3px;
+    }
+    .saved-meta { font-size: 11px; color: #475569; }
+
+    /* ── Error box ───────────────────────────── */
+    .error-box {
+      background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.2);
+      border-radius: 8px; padding: 9px 12px; font-size: 12px; color: #fca5a5;
+      line-height: 1.4;
+    }
+
+    /* ── Footer ──────────────────────────────── */
+    .footer {
+      padding: 10px 16px;
+      border-top: 1px solid #1e293b;
+      display: flex; justify-content: center;
+    }
+    .process-link {
+      color: #475569; text-decoration: none; font-size: 11px;
+      display: flex; align-items: center; gap: 5px; transition: color .15s;
+    }
+    .process-link:hover { color: #10b981; }
+    .process-link svg { flex-shrink: 0; }
+
+    /* ── Utility ─────────────────────────────── */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────── -->
+<div class="header">
+  <div class="logo-mark">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+      <path d="M13 2L3 14h8l-2 8 12-12h-8z"/>
+    </svg>
+  </div>
+  <div>
+    <div class="brand-name">StreamSweep</div>
+    <div class="brand-sub">Stream Recorder · MV3</div>
+  </div>
+</div>
+
+<!-- ── Body ────────────────────────────────── -->
+<div class="body">
+
+  <!-- Seller detection -->
+  <div class="seller-row">
+    <span class="seller-indicator off" id="sellerDot"></span>
+    <div style="min-width:0;flex:1">
+      <div class="seller-label">Detected streamer</div>
+      <div class="seller-value dim" id="sellerDisplay">Detecting…</div>
+    </div>
+  </div>
+
+  <!-- Quality selector -->
+  <div id="qualitySection">
+    <div class="section-label">Recording quality</div>
+    <div class="quality-grid">
+      <div class="q-option selected" data-quality="720p" id="q720">
+        <div class="q-radio"></div>
+        <span class="q-label">720p</span>
+        <span class="q-badge">rec</span>
+      </div>
+      <div class="q-option" data-quality="1080p" id="q1080">
+        <div class="q-radio"></div>
+        <span class="q-label">1080p</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timer (shown while recording) -->
+  <div class="timer-row hidden" id="timerRow">
+    <span class="rec-dot"></span>
+    <span class="timer-display" id="timerDisplay">00:00:00</span>
+  </div>
+
+  <!-- Record / Stop button -->
+  <button class="action-btn start" id="actionBtn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="12" r="10"/>
+    </svg>
+    Start Recording
+  </button>
+
+  <!-- Saved confirmation -->
+  <div class="saved-box hidden" id="savedBox">
+    <div class="saved-title">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <path d="M20 6L9 17l-5-5"/>
+      </svg>
+      File saved!
+    </div>
+    <div class="saved-filename" id="savedFilename"></div>
+    <div class="saved-meta" id="savedMeta"></div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-box hidden" id="errorBox"></div>
+
+</div>
+
+<!-- ── Footer ──────────────────────────────── -->
+<div class="footer">
+  <a href="https://streamsweep.ai" target="_blank" rel="noopener" class="process-link">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+    </svg>
+    How to process with StreamSweep
+    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+      <path d="M7 17L17 7M17 7H7M17 7v10"/>
+    </svg>
+  </a>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

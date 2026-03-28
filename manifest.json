@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "StreamSweep Recorder",
+  "version": "1.0.0",
+  "description": "Record Whatnot & TikTok live streams for StreamSweep AI analytics",
+
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "downloads",
+    "activeTab",
+    "storage"
+  ],
+
+  "host_permissions": [
+    "*://*.whatnot.com/*",
+    "*://*.tiktok.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "StreamSweep Recorder"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["*://*.whatnot.com/*", "*://*.tiktok.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
