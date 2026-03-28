@@ -1,7 +1,7 @@
 // background.js — StreamSweep MV3 Service Worker
 
 // ─────────────────────────────────────────────
-// STATE — per-tab Map (multiple simultaneous recordings, fix #5)
+// STATE — per-tab Map
 // Persisted to chrome.storage.session so state survives SW suspension.
 // ─────────────────────────────────────────────
 const recordings = new Map();
@@ -18,15 +18,12 @@ function getTabState(tabId) {
   };
 }
 
-// Persist the recordings Map across service-worker suspension cycles.
 async function persistState() {
   try {
     const obj = {};
-    for (const [tabId, state] of recordings) {
-      obj[String(tabId)] = state;
-    }
+    for (const [tabId, state] of recordings) obj[String(tabId)] = state;
     await chrome.storage.session.set({ ssRecordings: obj });
-  } catch { /* storage not critical */ }
+  } catch { /* not critical */ }
 }
 
 async function restoreState() {
@@ -38,6 +35,65 @@ async function restoreState() {
     }
   } catch {}
 }
+
+// ─────────────────────────────────────────────
+// DOWNLOAD LISTENER — must be registered at the TOP LEVEL so Chrome MV3
+// service workers pick it up on every wake cycle.
+// offscreen.js sends DOWNLOAD_RECORDING with base64; we call chrome.downloads
+// here because chrome.downloads is only available in the service worker.
+// ─────────────────────────────────────────────
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== "DOWNLOAD_RECORDING") return; // let other listeners handle it
+
+  const dataUrl = `data:${message.mimeType};base64,${message.base64}`;
+
+  chrome.downloads.download(
+    {
+      url:      dataUrl,
+      filename: `Stream Sweep Streams/${message.filename}`,
+      saveAs:   false,
+    },
+    (downloadId) => {
+      if (chrome.runtime.lastError) {
+        console.error("[StreamSweep] Download failed:", chrome.runtime.lastError.message);
+        // Update state to reflect the error
+        const tabId = message.tabId;
+        if (tabId != null) {
+          recordings.set(tabId, {
+            ...getTabState(tabId),
+            isRecording: false,
+            error: `Download failed: ${chrome.runtime.lastError.message}`,
+          });
+          persistState();
+          updateIcon();
+        }
+      } else {
+        // Download queued successfully — update UI state
+        const tabId = message.tabId;
+        if (tabId != null) {
+          recordings.set(tabId, {
+            ...getTabState(tabId),
+            isRecording: false,
+            savedFile: {
+              filename:  message.filename,
+              size:      message.size,
+              isPartial: message.isPartial ?? false,
+            },
+            error: null,
+          });
+          persistState();
+          updateIcon();
+        }
+        // Close the offscreen doc once no recordings remain
+        const anyRecording = [...recordings.values()].some((r) => r.isRecording);
+        if (!anyRecording) closeOffscreen();
+      }
+    },
+  );
+
+  sendResponse({ success: true });
+  return true;
+});
 
 // ─────────────────────────────────────────────
 // ICON GENERATION (OffscreenCanvas — works in SW)
@@ -94,26 +150,21 @@ async function updateIcon() {
 }
 
 // ─────────────────────────────────────────────
-// STARTUP — clean up stale captures (fix #2: stuck capture state)
+// STARTUP — clean up stale captures
 // ─────────────────────────────────────────────
 async function handleStartup() {
-  // Close any offscreen document left over from a crash/reload.
-  // This releases captured streams and restores the tab's audio routing.
   await closeOffscreen();
-
-  // Restore any persisted recording state (so elapsed timers survive SW suspension).
   await restoreState();
 
-  // If the SW restarted mid-recording (e.g., extension updated), mark those
-  // tabs as no longer recording so the UI doesn't show a phantom recording state.
-  let stateChanged = false;
+  // Mark any in-progress recordings as interrupted (the offscreen doc is gone)
+  let changed = false;
   for (const [tabId, state] of recordings) {
     if (state.isRecording) {
-      recordings.set(tabId, { ...state, isRecording: false, error: "Recording was interrupted by extension restart." });
-      stateChanged = true;
+      recordings.set(tabId, { ...state, isRecording: false, error: "Recording interrupted by extension restart." });
+      changed = true;
     }
   }
-  if (stateChanged) await persistState();
+  if (changed) await persistState();
 
   await updateIcon();
 }
@@ -126,9 +177,7 @@ chrome.runtime.onInstalled.addListener(handleStartup);
 // ─────────────────────────────────────────────
 async function offscreenExists() {
   try {
-    const contexts = await chrome.runtime.getContexts({
-      contextTypes: ["OFFSCREEN_DOCUMENT"],
-    });
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
     return contexts.length > 0;
   } catch {
     return false;
@@ -141,9 +190,6 @@ async function closeOffscreen() {
   } catch { /* ignore */ }
 }
 
-// Create the offscreen document if it doesn't already exist.
-// USER_MEDIA:     capture tab audio/video via getUserMedia
-// AUDIO_PLAYBACK: route captured audio back to speakers (fix: audio muted)
 async function ensureOffscreen() {
   if (!(await offscreenExists())) {
     await chrome.offscreen.createDocument({
@@ -172,9 +218,12 @@ function getMediaStreamId(tabId) {
 }
 
 // ─────────────────────────────────────────────
-// MESSAGE HANDLER
+// GENERAL MESSAGE HANDLER (popup ↔ background, offscreen errors)
 // ─────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // DOWNLOAD_RECORDING is handled by the dedicated top-level listener above.
+  if (msg.type === "DOWNLOAD_RECORDING") return;
+
   dispatch(msg)
     .then(sendResponse)
     .catch((err) => sendResponse({ success: false, error: err.message }));
@@ -182,23 +231,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 async function dispatch(msg) {
-  // ── Offscreen → background: recording was saved successfully ───────────────
-  // The offscreen document now initiates the download itself via createObjectURL,
-  // so we only need to update state here (no base64 handling needed).
-  if (msg.type === "RECORDING_SAVED") {
-    const { tabId, filename, size, isPartial } = msg;
-    recordings.set(tabId, {
-      ...getTabState(tabId),
-      isRecording: false,
-      savedFile:   { filename, size, isPartial: isPartial ?? false },
-      error:       null,
-    });
-    await persistState();
-    if (![...recordings.values()].some((r) => r.isRecording)) await closeOffscreen();
-    await updateIcon();
-    return { success: true };
-  }
-
   switch (msg.action) {
     // ── Popup: start recording ──────────────────────────────────────────────
     case "startRecording": {
@@ -213,11 +245,8 @@ async function dispatch(msg) {
         streamId = await getMediaStreamId(tabId);
       } catch (err) {
         const errMsg = err.message || "";
-        // Fix #2: human-readable message for stuck-capture error
         if (errMsg.includes("active stream") || errMsg.includes("already being captured")) {
-          throw new Error(
-            "This tab already has an active capture stream. Use Force Stop to clear it, then try again."
-          );
+          throw new Error("This tab already has an active capture stream. Use Force Stop to clear it, then try again.");
         }
         if (errMsg.includes("Cannot access") || errMsg.includes("chrome://")) {
           throw new Error("This tab cannot be captured (browser internal pages are not allowed).");
@@ -238,7 +267,6 @@ async function dispatch(msg) {
       });
       await persistState();
       await updateIcon();
-
       await ensureOffscreen();
 
       const result = await chrome.runtime.sendMessage({
@@ -271,26 +299,22 @@ async function dispatch(msg) {
 
     // ── Popup: poll status ──────────────────────────────────────────────────
     case "getStatus": {
-      const { tabId }  = msg;
-      const entry      = getTabState(tabId);
-      const elapsed    = entry.isRecording && entry.startTime
+      const { tabId }    = msg;
+      const entry        = getTabState(tabId);
+      const elapsed      = entry.isRecording && entry.startTime
         ? Math.floor((Date.now() - entry.startTime) / 1000)
         : 0;
-      // Report whether the offscreen doc is alive with no active recording —
-      // the popup uses this to show the Force Stop button (fix #2).
       const offscreenUp  = await offscreenExists();
       const anyRecording = [...recordings.values()].some((r) => r.isRecording);
       const stuckCapture = offscreenUp && !anyRecording;
       return { ...entry, elapsed, stuckCapture };
     }
 
-    // ── Popup: force-stop all captures (fix #2: stuck capture state) ────────
+    // ── Popup: force-stop all captures ──────────────────────────────────────
     case "forceStop": {
       await closeOffscreen();
       for (const [tabId, state] of recordings) {
-        if (state.isRecording) {
-          recordings.set(tabId, { ...state, isRecording: false, error: null });
-        }
+        if (state.isRecording) recordings.set(tabId, { ...state, isRecording: false, error: null });
       }
       await persistState();
       await updateIcon();
@@ -300,11 +324,7 @@ async function dispatch(msg) {
     // ── Offscreen: recording error ──────────────────────────────────────────
     case "recordingError": {
       const { tabId, error } = msg;
-      recordings.set(tabId, {
-        ...getTabState(tabId),
-        isRecording: false,
-        error:       error || "Recording failed.",
-      });
+      recordings.set(tabId, { ...getTabState(tabId), isRecording: false, error: error || "Recording failed." });
       await persistState();
       if (![...recordings.values()].some((r) => r.isRecording)) await closeOffscreen();
       await updateIcon();
